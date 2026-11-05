@@ -60,7 +60,7 @@ public final class Match {
     // dl_applied,winner,win_by_runs,win_by_wickets,player_of_match,venue,
     // umpire1,umpire2,umpire3
     public static Match fromCsv(String line) {
-        String[] c = line.split(",", -1); // -1 keeps trailing empty fields
+        String[] c = splitCsv(line);
         return new Match(
                 Integer.parseInt(c[0].trim()), Integer.parseInt(c[1].trim()),
                 c[2], c[3], c[4], c[5], c[6], c[7], c[8],
