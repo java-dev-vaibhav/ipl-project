@@ -71,6 +71,19 @@ public final class Match {
                 c.length > 17 ? c[17] : ""); // umpire3 is missing/empty in many rows
     }
 
+    private static String[] splitCsv(String line) {
+        // split on commas that are followed by an even number of quotes (i.e. not inside "...")
+        String[] c = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", -1);
+        for (int i = 0; i < c.length; i++) {
+            String s = c[i].trim();
+            if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+                s = s.substring(1, s.length() - 1).replace("\"\"", "\"");
+            }
+            c[i] = s;
+        }
+        return c;
+    }
+
     public static List<Match> load(String path) throws IOException {
         try (Stream<String> lines = Files.lines(Paths.get(path))) {
             return lines.skip(1) // header
