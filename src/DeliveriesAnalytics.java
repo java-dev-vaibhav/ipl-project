@@ -1,106 +1,84 @@
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 public class DeliveriesAnalytics {
     private final List<Delivery> deliveries;
-    private final Map<Integer, Match> matchById;
-    public Map<String, Integer> topRunScorers(int season, int n) {
-        Map<String, Integer> runs = new HashMap<>();
-
-        for (Delivery d : deliveries) {
-            Match m = matchById.get(d.getMatchId());
-            if (m == null || m.getSeason() != season || d.isSuperOver()) {
-                continue;
-            }
-            String batsman = d.getBatsman();
-            // batsman_runs only: extras (wides, byes, leg byes) are not credited to the batsman
-            runs.put(batsman, runs.getOrDefault(batsman, 0) + d.getBatsmanRuns());
-        }
-
-        // sort descending by runs (highest = best)
-        List<Map.Entry<String, Integer>> list = new ArrayList<>(runs.entrySet());
-        Collections.sort(list, new Comparator<Map.Entry<String, Integer>>() {
-            @Override
-            public int compare(Map.Entry<String, Integer> a, Map.Entry<String, Integer> b) {
-                return Integer.compare(b.getValue(), a.getValue());
-            }
-        });
-
-        Map<String, Integer> top = new LinkedHashMap<>();
-        for (int i = 0; i < list.size() && i < n; i++) {
-            top.put(list.get(i).getKey(), list.get(i).getValue());
-        }
-        return top;
-    }
-
-    public Map<String, Double> topEconomicalBowlers(int season, int n) {
-        Map<String, Integer> runs = new HashMap<>();
-        Map<String, Integer> balls = new HashMap<>();
-
-        for (Delivery d : deliveries) {
-            Match m = matchById.get(d.getMatchId());
-            if (m == null || m.getSeason() != season || d.isSuperOver()) {
-                continue;
-            }
-            String bowler = d.getBowler();
-
-            // runs charged to the bowler: exclude byes and leg byes
-            int conceded = d.getTotalRuns() - d.getByeRuns() - d.getLegByeRuns();
-            runs.put(bowler, runs.getOrDefault(bowler, 0) + conceded);
-
-            // only legal deliveries count towards overs (no wides, no no-balls)
-            if (d.isLegalDelivery()) {
-                balls.put(bowler, balls.getOrDefault(bowler, 0) + 1);
-            }
-        }
-
-        // economy = runs / (balls / 6)
-        Map<String, Double> economy = new HashMap<>();
-        for (String bowler : runs.keySet()) {
-            int legalBalls = balls.getOrDefault(bowler, 0);
-            if (legalBalls == 0) {
-                continue; // avoid divide by zero
-            }
-            economy.put(bowler, runs.get(bowler) * 6.0 / legalBalls);
-        }
-
-        // sort ascending by economy (lowest = best)
-        List<Map.Entry<String, Double>> list = new ArrayList<>(economy.entrySet());
-        Collections.sort(list, new Comparator<Map.Entry<String, Double>>() {
-            @Override
-            public int compare(Map.Entry<String, Double> a, Map.Entry<String, Double> b) {
-                return Double.compare(a.getValue(), b.getValue());
-            }
-        });
-
-        // keep the top n in order
-        Map<String, Double> top = new LinkedHashMap<>();
-        for (int i = 0; i < list.size() && i < n; i++) {
-            top.put(list.get(i).getKey(), list.get(i).getValue());
-        }
-        return top;
-    }
+    private final Map<Integer, Match> matchById = new HashMap<>();
 
     public DeliveriesAnalytics(List<Delivery> deliveries, List<Match> matches) {
         this.deliveries = deliveries;
-        this.matchById = new HashMap<>();
         for (Match m : matches) {
             matchById.put(m.getId(), m);
         }
     }
 
-    // Extra runs conceded per bowling team in a given season
-    public Map<String, Integer> extraRunsConceded(int season) {
-        Map<String, Integer> extras = new HashMap<>();
+    // top n batsmen by runs in a season (batsman runs only, super overs excluded)
+    public Map<String, Integer> topRunScorers(int season, int n) {
+        Map<String, Integer> runs = new HashMap<>();
+        for (Delivery d : deliveries) {
+            if (!inSeason(d, season) || d.isSuperOver()) continue;
+            runs.merge(d.getBatsman(), d.getBatsmanRuns(), Integer::sum);
+        }
+        return topN(runs, n, (a, b) -> Integer.compare(b.getValue(), a.getValue()));
+    }
+
+    // top n bowlers by lowest economy in a season (super overs excluded)
+    public Map<String, Double> topEconomicalBowlers(int season, int n) {
+        Map<String, Integer> runs = new HashMap<>();
+        Map<String, Integer> balls = new HashMap<>();
 
         for (Delivery d : deliveries) {
-            Match m = matchById.get(d.getMatchId());
-            if (m == null || m.getSeason() != season) {
-                continue; // not a 2016 match (or unknown match id)
+            if (!inSeason(d, season) || d.isSuperOver()) continue;
+            String bowler = d.getBowler();
+
+            // byes and leg byes are not charged to the bowler
+            runs.merge(bowler, d.getTotalRuns() - d.getByeRuns() - d.getLegByeRuns(), Integer::sum);
+
+            // wides and no-balls don't count as balls bowled
+            if (d.isLegalDelivery()) {
+                balls.merge(bowler, 1, Integer::sum);
             }
-            String team = d.getBowlingTeam();
-            extras.put(team, extras.getOrDefault(team, 0) + d.getExtraRuns());
         }
 
+        Map<String, Double> economy = new HashMap<>();
+        for (Map.Entry<String, Integer> e : runs.entrySet()) {
+            int legalBalls = balls.getOrDefault(e.getKey(), 0);
+            if (legalBalls > 0) {
+                economy.put(e.getKey(), e.getValue() * 6.0 / legalBalls);
+            }
+        }
+        return topN(economy, n, (a, b) -> Double.compare(a.getValue(), b.getValue()));
+    }
+
+    // extra runs conceded per bowling team in a season
+    public Map<String, Integer> extraRunsConceded(int season) {
+        Map<String, Integer> extras = new HashMap<>();
+        for (Delivery d : deliveries) {
+            if (!inSeason(d, season)) continue;
+            extras.merge(d.getBowlingTeam(), d.getExtraRuns(), Integer::sum);
+        }
         return extras;
+    }
+
+    private boolean inSeason(Delivery d, int season) {
+        Match m = matchById.get(d.getMatchId());
+        return m != null && m.getSeason() == season;
+    }
+
+    // sort entries with the given order and keep the first n
+    private static <V> Map<String, V> topN(Map<String, V> map, int n,
+                                           Comparator<Map.Entry<String, V>> order) {
+        List<Map.Entry<String, V>> list = new ArrayList<>(map.entrySet());
+        Collections.sort(list, order);
+        Map<String, V> top = new LinkedHashMap<>();
+        for (int i = 0; i < list.size() && i < n; i++) {
+            top.put(list.get(i).getKey(), list.get(i).getValue());
+        }
+        return top;
     }
 }
